@@ -1,0 +1,19 @@
+name: gratis_precip
+channels:
+  - conda-forge
+  - defaults
+dependencies:
+  - python=3.12
+  - numpy
+  - pandas
+  - scipy
+  - matplotlib
+  - scikit-learn
+  - pytest
+  - flake8
+  - black
+  - sphinx
+  - sphinx-rtd-theme
+  - pip
+  - pip:
+      - setuptools_scm
