@@ -54,3 +54,6 @@ docs/_build/
 # Conda
 .conda/
 conda-meta/
+
+# data 
+data/
