@@ -133,6 +133,12 @@ class PACFFeature(BaseFeature):
     def calculate(self, time_series: np.ndarray) -> List[float]:
         """
         Calculate partial autocorrelation function features.
+
+        Args:
+            time_series (np.ndarray): The input time series data.
+
+        Returns:
+            List[float]: The first five PACF coefficients.
         """
         pacf_result = pacf(time_series, nlags=5)
         return list(pacf_result[1:6])
@@ -306,6 +312,12 @@ class UnitRootFeature(BaseFeature):
     def calculate(self, time_series: np.ndarray) -> Tuple[float, float]:
         """
         Calculate unit root test statistics.
+
+        Args:
+            time_series (np.ndarray): The input time series data.
+
+        Returns:
+            Tuple[float, float]: KPSS and ADF test statistics.
         """
         kpss_stat, kpss_p_value, _, _ = kpss(time_series)
         adf_stat, adf_p_value, _, _, _, _ = adfuller(time_series)
