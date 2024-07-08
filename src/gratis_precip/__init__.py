@@ -2,7 +2,7 @@
 
 # from . import models
 from . import features
-
+from .dimensionality_reduction import DimensionalityReducer, TSNEReduction, PCAReduction
 # from . import generation
 # from . import optimization
 # from . import visualization
