@@ -1,6 +1,8 @@
 from abc import ABC, abstractmethod
 from typing import List, Union, Tuple
 import numpy as np
+
+import statsmodels.api as sm
 from statsmodels.tsa.stattools import kpss
 from statsmodels.tsa.stattools import adfuller
 from statsmodels.tsa.ar_model import AutoReg
@@ -89,15 +91,15 @@ class NDiffsFeature(BaseFeature):
         Returns:
             int: The number of differences required for stationarity.
         """
-        max_diff = 2  # Maximum number of differences to check
+        max_diff = 2
         for d in range(max_diff + 1):
             if d == 0:
                 diff_series = time_series
             else:
                 diff_series = np.diff(diff_series, n=1)
 
-            _, p_value, _, _, _, _ = kpss(diff_series)
-            if p_value >= 0.05:
+            kpss_result = kpss(diff_series)
+            if kpss_result[1] >= 0.05:
                 return d
         return max_diff
 
@@ -125,8 +127,12 @@ class ACFFeature(BaseFeature):
         """
         Calculate autocorrelation function features.
         """
-        acf_result = acf(time_series, nlags=10)
-        return [acf_result[1], acf_result[10], sum(acf_result[1:11] ** 2)]
+        acf_result = acf(time_series, nlags=min(10, len(time_series) - 1))
+        return [
+            acf_result[1] if len(acf_result) > 1 else 0,
+            acf_result[-1],
+            np.sum(acf_result[1:] ** 2),
+        ]
 
 
 class PACFFeature(BaseFeature):
@@ -138,10 +144,25 @@ class PACFFeature(BaseFeature):
             time_series (np.ndarray): The input time series data.
 
         Returns:
-            List[float]: The first five PACF coefficients.
+            List[float]: The first five PACF coefficients, padded with zeros if necessary.
         """
-        pacf_result = pacf(time_series, nlags=5)
-        return list(pacf_result[1:6])
+        if len(time_series) <= 1:
+            return [0.0] * 5
+
+        # Calculate maximum allowed lags
+        max_lags = min(5, len(time_series) // 2 - 1)
+
+        if max_lags <= 0:
+            return [0.0] * 5
+
+        # Calculate PACF
+        pacf_result = pacf(time_series, nlags=max_lags, method="ols")
+
+        # Remove the first value (lag 0) and pad with zeros if necessary
+        result = list(pacf_result[1:])
+
+        # Pad with zeros if we have fewer than 5 values
+        return result + [0.0] * (5 - len(result))
 
 
 class EntropyFeature(BaseFeature):
@@ -181,6 +202,14 @@ class NonlinearityFeature(BaseFeature):
         Returns:
             float: The nonlinearity coefficient.
         """
+        if len(time_series) < 3:
+            return 0.0
+
+        ar_model = AutoReg(time_series, lags=1, old_names=False).fit()
+        X = ar_model.model.data.orig_exog
+        if X is None:
+            return 0.0
+
         # Fit a linear AR model
         ar_model = AutoReg(time_series, lags=1, old_names=False).fit()
         linear_resid = ar_model.resid
@@ -256,8 +285,8 @@ class StabilityFeature(BaseFeature):
             float: The stability value.
         """
         # Define the number of windows
-        num_windows = 10
-        window_size = len(time_series) // num_windows
+        num_windows = min(10, len(time_series))
+        window_size = max(1, len(time_series) // num_windows)
 
         # Create tiled windows
         windows = [
@@ -287,23 +316,22 @@ class LumpinessFeature(BaseFeature):
         Returns:
             float: The lumpiness value.
         """
-        # Define the number of windows
-        num_windows = 10
-        window_size = len(time_series) // num_windows
+        num_windows = min(10, len(time_series))
+        window_size = max(1, len(time_series) // num_windows)
 
-        # Create tiled windows
+        num_windows = min(10, len(time_series))
+        window_size = max(1, len(time_series) // num_windows)
+
         windows = [
             time_series[i : i + window_size]
             for i in range(0, len(time_series), window_size)
         ]
 
-        # Calculate variances for each window
         window_variances = np.array(
             [np.var(window) for window in windows if len(window) > 1]
         )
 
-        # Calculate lumpiness as the variance of the window variances
-        lumpiness = np.var(window_variances)
+        lumpiness = np.var(window_variances) if len(window_variances) > 1 else 0.0
 
         return lumpiness
 
@@ -335,6 +363,12 @@ class HeterogeneityFeature(BaseFeature):
         Returns:
             Tuple[float, float, float]: Maximum level shift, variance shift, and KL divergence shift.
         """
+
+        def kl_divergence(p, q):
+            p = np.asarray(p, dtype=np.float64)
+            q = np.asarray(q, dtype=np.float64)
+            return np.sum(np.where(p != 0, p * np.log(p / q), 0))
+
         window_size = min(
             10, len(time_series) // 5
         )  # Adjust window size based on series length
@@ -355,11 +389,6 @@ class HeterogeneityFeature(BaseFeature):
         variance_shift = np.max(np.abs(np.diff(variances)))
 
         # KL divergence shift
-        def kl_divergence(p, q):
-            p = np.asarray(p, dtype=np.float)
-            q = np.asarray(q, dtype=np.float)
-            return np.sum(np.where(p != 0, p * np.log(p / q), 0))
-
         kl_shifts = []
         for i in range(len(windows) - 1):
             hist1, _ = np.histogram(windows[i], bins=10, density=True)
@@ -385,10 +414,12 @@ class TrendFeature(BaseFeature):
         Returns:
             float: The strength of trend value.
         """
-        # Perform STL decomposition
-        stl = STL(time_series, seasonal=13, period=1).fit()
+        if len(time_series) < 4:
+            return 0.0
 
-        # Calculate the strength of trend
+        seasonal = max(3, min(13, (len(time_series) // 2) | 1))  # Ensure odd and >= 3
+        stl = STL(time_series, seasonal=seasonal, period=2).fit()
+
         var_trend_plus_resid = np.var(stl.trend + stl.resid)
         var_resid = np.var(stl.resid)
 
@@ -408,10 +439,12 @@ class SeasonalStrengthFeature(BaseFeature):
         Returns:
             Union[float, List[float]]: The strength of seasonality value(s).
         """
-        # Perform STL decomposition
-        stl = STL(time_series, seasonal=13, period=1).fit()
+        if len(time_series) < 4:
+            return 0.0
 
-        # Calculate the strength of seasonality
+        seasonal = max(3, min(13, (len(time_series) // 2) | 1))  # Ensure odd and >= 3
+        stl = STL(time_series, seasonal=seasonal, period=2).fit()
+
         var_seasonal_plus_resid = np.var(stl.seasonal + stl.resid)
         var_resid = np.var(stl.resid)
 
@@ -507,17 +540,16 @@ class RemainderACFFeature(BaseFeature):
         Returns:
             Tuple[float, float]: The first ACF coefficient and sum of squares of first 10 ACF coefficients.
         """
-        # Perform STL decomposition
-        stl = STL(time_series, seasonal=13, period=1).fit()
+        if len(time_series) < 4:
+            return 0.0, 0.0
 
-        # Get the remainder component
+        seasonal = max(3, min(13, (len(time_series) // 2) | 1))  # Ensure odd and >= 3
+        stl = STL(time_series, seasonal=seasonal, period=2).fit()
+
         remainder = stl.resid
+        acf_values = acf(remainder, nlags=min(10, len(remainder) - 1))
 
-        # Calculate ACF of the remainder
-        acf_values = acf(remainder, nlags=10)
-
-        # Extract required values
-        first_acf = acf_values[1]
+        first_acf = acf_values[1] if len(acf_values) > 1 else 0.0
         sum_squared_acf = np.sum(acf_values[1:] ** 2)
 
         return first_acf, sum_squared_acf
