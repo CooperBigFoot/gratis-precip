@@ -3,12 +3,14 @@ from typing import List, Union, Tuple
 import numpy as np
 from statsmodels.tsa.stattools import kpss
 from statsmodels.tsa.stattools import adfuller
-import numpy as np
+from statsmodels.tsa.ar_model import AutoReg
 from statsmodels.tsa.stattools import acf, pacf
 from scipy.stats import entropy
 from statsmodels.tsa.seasonal import STL
 from statsmodels.tsa.stattools import adfuller
 from arch import arch_model
+from scipy import signal
+from scipy.stats import entropy
 
 
 class BaseFeature(ABC):
@@ -117,6 +119,7 @@ class NSDiffsFeature(BaseFeature):
         """
         return 0  # Placeholder implementation
 
+
 class ACFFeature(BaseFeature):
     def calculate(self, time_series: np.ndarray) -> List[float]:
         """
@@ -138,46 +141,165 @@ class PACFFeature(BaseFeature):
 class EntropyFeature(BaseFeature):
     def calculate(self, time_series: np.ndarray) -> float:
         """
-        Calculate spectral entropy.
+        Calculate the spectral entropy of the time series.
+
+        Args:
+            time_series (np.ndarray): The input time series data.
+
+        Returns:
+            float: The spectral entropy value.
         """
-        # TODO: Implement proper spectral entropy calculation
-        return entropy(np.abs(np.fft.fft(time_series)))
+        # Calculate the power spectral density using Welch's method
+        freqs, psd = signal.welch(time_series, nperseg=min(len(time_series), 256))
+
+        # Normalize the PSD
+        psd_norm = psd / np.sum(psd)
+
+        # Calculate the entropy of the normalized PSD
+        spectral_entropy = entropy(psd_norm)
+
+        # Normalize the entropy by dividing by log(n), where n is the number of frequency bins
+        spectral_entropy /= np.log(len(freqs))
+
+        return spectral_entropy
 
 
 class NonlinearityFeature(BaseFeature):
     def calculate(self, time_series: np.ndarray) -> float:
         """
-        Calculate nonlinearity coefficient.
+        Calculate the nonlinearity coefficient based on a simplified version of Teräsvirta's test.
+
+        Args:
+            time_series (np.ndarray): The input time series data.
+
+        Returns:
+            float: The nonlinearity coefficient.
         """
-        # TODO: Implement Teräsvirta's test statistic
-        return 0.0
+        # Fit a linear AR model
+        ar_model = AutoReg(time_series, lags=1, old_names=False).fit()
+        linear_resid = ar_model.resid
+
+        # Prepare data for nonlinear model
+        X = ar_model.model.data.orig_exog
+        y = time_series[1:]  # Remove first observation to match X
+
+        # Fit a simple nonlinear model (y = b0 + b1*x + b2*x^2 + b3*x^3)
+        X_nonlinear = np.column_stack((X, X**2, X**3))
+        X_nonlinear = sm.add_constant(X_nonlinear)  # Add intercept term
+        nonlinear_model = sm.OLS(y, X_nonlinear).fit()
+        nonlinear_resid = nonlinear_model.resid
+
+        # Calculate the nonlinearity coefficient
+        sse_linear = np.sum(linear_resid**2)
+        sse_nonlinear = np.sum(nonlinear_resid**2)
+        nonlinearity = (sse_linear - sse_nonlinear) / sse_linear
+
+        return nonlinearity
 
 
 class HurstFeature(BaseFeature):
     def calculate(self, time_series: np.ndarray) -> float:
         """
-        Calculate long-memory coefficient (Hurst exponent).
+        Calculate the Hurst exponent using the rescaled range (R/S) method.
+
+        Args:
+            time_series (np.ndarray): The input time series data.
+
+        Returns:
+            float: The estimated Hurst exponent.
         """
-        # TODO: Implement Hurst exponent calculation
-        return 0.5
+
+        def hurst_rs(ts, max_lag=100):
+            lags = range(2, min(len(ts), max_lag))
+            rs_values = []
+
+            for lag in lags:
+                # Ensure the segments are of consistent lengths
+                num_segments = len(ts) // lag
+                ts_shifts = np.array(
+                    [ts[i * lag : (i + 1) * lag] for i in range(num_segments)]
+                )
+
+                mean_adjusted = ts_shifts - ts_shifts.mean(axis=1, keepdims=True)
+                cumsum = mean_adjusted.cumsum(axis=1)
+                r = np.max(cumsum, axis=1) - np.min(cumsum, axis=1)
+                s = np.std(ts_shifts, axis=1)
+                s[s == 0] = np.nan  # Avoid division by zero
+                rs = r / s
+                rs = rs[~np.isnan(rs)]  # Remove NaNs resulting from division by zero
+                rs_values.append(np.mean(rs))
+
+            # Fit line to log-log plot
+            log_lags = np.log(lags)
+            log_rs_values = np.log(rs_values)
+            slope, _ = np.polyfit(log_lags, log_rs_values, 1)
+            return slope
+
+        return hurst_rs(time_series)
 
 
 class StabilityFeature(BaseFeature):
     def calculate(self, time_series: np.ndarray) -> float:
         """
-        Calculate stability feature.
+        Calculate the stability feature using tiled windows.
+
+        Args:
+            time_series (np.ndarray): The input time series data.
+
+        Returns:
+            float: The stability value.
         """
-        # TODO: Implement stability calculation using tiled windows
-        return 0.0
+        # Define the number of windows
+        num_windows = 10
+        window_size = len(time_series) // num_windows
+
+        # Create tiled windows
+        windows = [
+            time_series[i : i + window_size]
+            for i in range(0, len(time_series), window_size)
+        ]
+
+        # Calculate means for each window
+        window_means = np.array(
+            [np.mean(window) for window in windows if len(window) > 0]
+        )
+
+        # Calculate stability as the variance of the window means
+        stability = np.var(window_means)
+
+        return stability
 
 
 class LumpinessFeature(BaseFeature):
     def calculate(self, time_series: np.ndarray) -> float:
         """
-        Calculate lumpiness feature.
+        Calculate the lumpiness feature using tiled windows.
+
+        Args:
+            time_series (np.ndarray): The input time series data.
+
+        Returns:
+            float: The lumpiness value.
         """
-        # TODO: Implement lumpiness calculation using tiled windows
-        return 0.0
+        # Define the number of windows
+        num_windows = 10
+        window_size = len(time_series) // num_windows
+
+        # Create tiled windows
+        windows = [
+            time_series[i : i + window_size]
+            for i in range(0, len(time_series), window_size)
+        ]
+
+        # Calculate variances for each window
+        window_variances = np.array(
+            [np.var(window) for window in windows if len(window) > 1]
+        )
+
+        # Calculate lumpiness as the variance of the window variances
+        lumpiness = np.var(window_variances)
+
+        return lumpiness
 
 
 class UnitRootFeature(BaseFeature):
@@ -193,97 +315,289 @@ class UnitRootFeature(BaseFeature):
 class HeterogeneityFeature(BaseFeature):
     def calculate(self, time_series: np.ndarray) -> Tuple[float, float, float]:
         """
-        Calculate heterogeneity features.
+        Calculate heterogeneity features: level shift, variance shift, and KL divergence shift.
+
+        Args:
+            time_series (np.ndarray): The input time series data.
+
+        Returns:
+            Tuple[float, float, float]: Maximum level shift, variance shift, and KL divergence shift.
         """
-        # TODO: Implement level shift, variance shift, and KL divergence shift
-        return 0.0, 0.0, 0.0
+        window_size = min(
+            10, len(time_series) // 5
+        )  # Adjust window size based on series length
+
+        def rolling_window(a, window):
+            shape = a.shape[:-1] + (a.shape[-1] - window + 1, window)
+            strides = a.strides + (a.strides[-1],)
+            return np.lib.stride_tricks.as_strided(a, shape=shape, strides=strides)
+
+        windows = rolling_window(time_series, window_size)
+
+        # Level shift
+        means = np.mean(windows, axis=1)
+        level_shift = np.max(np.abs(np.diff(means)))
+
+        # Variance shift
+        variances = np.var(windows, axis=1)
+        variance_shift = np.max(np.abs(np.diff(variances)))
+
+        # KL divergence shift
+        def kl_divergence(p, q):
+            p = np.asarray(p, dtype=np.float)
+            q = np.asarray(q, dtype=np.float)
+            return np.sum(np.where(p != 0, p * np.log(p / q), 0))
+
+        kl_shifts = []
+        for i in range(len(windows) - 1):
+            hist1, _ = np.histogram(windows[i], bins=10, density=True)
+            hist2, _ = np.histogram(windows[i + 1], bins=10, density=True)
+            # Add small constant to avoid division by zero
+            hist1 = hist1 + 1e-10
+            hist2 = hist2 + 1e-10
+            kl_shifts.append(kl_divergence(hist1, hist2))
+
+        kl_divergence_shift = np.max(kl_shifts) if kl_shifts else 0.0
+
+        return level_shift, variance_shift, kl_divergence_shift
 
 
 class TrendFeature(BaseFeature):
     def calculate(self, time_series: np.ndarray) -> float:
         """
-        Calculate strength of trend.
+        Calculate the strength of trend using STL decomposition.
+
+        Args:
+            time_series (np.ndarray): The input time series data.
+
+        Returns:
+            float: The strength of trend value.
         """
-        # TODO: Implement trend strength calculation using STL decomposition
-        return 0.0
+        # Perform STL decomposition
+        stl = STL(time_series, seasonal=13, period=1).fit()
+
+        # Calculate the strength of trend
+        var_trend_plus_resid = np.var(stl.trend + stl.resid)
+        var_resid = np.var(stl.resid)
+
+        strength_of_trend = max(0, 1 - var_resid / var_trend_plus_resid)
+
+        return strength_of_trend
 
 
 class SeasonalStrengthFeature(BaseFeature):
     def calculate(self, time_series: np.ndarray) -> Union[float, List[float]]:
         """
-        Calculate strength of seasonality.
+        Calculate the strength of seasonality using STL decomposition.
+
+        Args:
+            time_series (np.ndarray): The input time series data.
+
+        Returns:
+            Union[float, List[float]]: The strength of seasonality value(s).
         """
-        # TODO: Implement seasonal strength calculation using STL decomposition
-        return 0.0
+        # Perform STL decomposition
+        stl = STL(time_series, seasonal=13, period=1).fit()
+
+        # Calculate the strength of seasonality
+        var_seasonal_plus_resid = np.var(stl.seasonal + stl.resid)
+        var_resid = np.var(stl.resid)
+
+        strength_of_seasonality = max(0, 1 - var_resid / var_seasonal_plus_resid)
+
+        return strength_of_seasonality
 
 
 class SpikeFeature(BaseFeature):
     def calculate(self, time_series: np.ndarray) -> float:
         """
-        Calculate spikiness.
+        Calculate the spikiness of the time series.
+
+        Args:
+            time_series (np.ndarray): The input time series data.
+
+        Returns:
+            float: The spikiness value.
         """
-        # TODO: Implement spikiness calculation
-        return 0.0
+        # Calculate first differences
+        diff_series = np.diff(time_series)
+
+        # Calculate leave-one-out variances
+        n = len(diff_series)
+        variances = np.array([np.var(np.delete(diff_series, i)) for i in range(n)])
+
+        # Calculate spikiness as the variance of the leave-one-out variances
+        spikiness = np.var(variances)
+
+        return spikiness
 
 
 class LinearityFeature(BaseFeature):
     def calculate(self, time_series: np.ndarray) -> float:
         """
-        Calculate linearity.
+        Calculate the linearity of the time series using orthogonal quadratic regression.
+
+        Args:
+            time_series (np.ndarray): The input time series data.
+
+        Returns:
+            float: The linearity value.
         """
-        # TODO: Implement linearity calculation using orthogonal quadratic regression
-        return 0.0
+        # Generate time index
+        t = np.arange(len(time_series))
+
+        # Perform orthogonal quadratic regression
+        coeffs = np.polyfit(t, time_series, 2)
+
+        # Extract coefficients
+        a, b, _ = coeffs
+
+        # Calculate linearity
+        linearity = abs(b)
+
+        return linearity
 
 
 class CurvatureFeature(BaseFeature):
     def calculate(self, time_series: np.ndarray) -> float:
         """
-        Calculate curvature.
+        Calculate the curvature of the time series using orthogonal quadratic regression.
+
+        Args:
+            time_series (np.ndarray): The input time series data.
+
+        Returns:
+            float: The curvature value.
         """
-        # TODO: Implement curvature calculation using orthogonal quadratic regression
-        return 0.0
+        # Generate time index
+        t = np.arange(len(time_series))
+
+        # Perform orthogonal quadratic regression
+        coeffs = np.polyfit(t, time_series, 2)
+
+        # Extract coefficients
+        a, _, _ = coeffs
+
+        # Calculate curvature
+        curvature = abs(a)
+
+        return curvature
 
 
 class RemainderACFFeature(BaseFeature):
     def calculate(self, time_series: np.ndarray) -> Tuple[float, float]:
         """
-        Calculate autocorrelation features of remainder component.
+        Calculate autocorrelation features of the remainder component.
+
+        Args:
+            time_series (np.ndarray): The input time series data.
+
+        Returns:
+            Tuple[float, float]: The first ACF coefficient and sum of squares of first 10 ACF coefficients.
         """
-        # TODO: Implement STL decomposition and calculate ACF of remainder
-        return 0.0, 0.0
+        # Perform STL decomposition
+        stl = STL(time_series, seasonal=13, period=1).fit()
+
+        # Get the remainder component
+        remainder = stl.resid
+
+        # Calculate ACF of the remainder
+        acf_values = acf(remainder, nlags=10)
+
+        # Extract required values
+        first_acf = acf_values[1]
+        sum_squared_acf = np.sum(acf_values[1:] ** 2)
+
+        return first_acf, sum_squared_acf
 
 
 class ARCHACFFeature(BaseFeature):
     def calculate(self, time_series: np.ndarray) -> float:
         """
         Calculate heterogeneity measure by ARCH ACF statistic.
+
+        Args:
+            time_series (np.ndarray): The input time series data.
+
+        Returns:
+            float: The ARCH ACF statistic.
         """
-        # TODO: Implement ARCH ACF statistic calculation
-        return 0.0
+        # Fit ARCH model
+        model = arch_model(time_series, vol="ARCH", p=1)
+        results = model.fit(disp="off")
+
+        # Calculate ACF of squared residuals
+        squared_resid = results.resid**2
+        acf_values = acf(squared_resid, nlags=12)[1:]
+
+        # Calculate ARCH ACF statistic
+        arch_acf = np.sum(acf_values**2)
+
+        return arch_acf
 
 
 class GARCHACFFeature(BaseFeature):
     def calculate(self, time_series: np.ndarray) -> float:
         """
         Calculate heterogeneity measure by GARCH ACF statistic.
+
+        Args:
+            time_series (np.ndarray): The input time series data.
+
+        Returns:
+            float: The GARCH ACF statistic.
         """
-        # TODO: Implement GARCH ACF statistic calculation
-        return 0.0
+        # Fit GARCH model
+        model = arch_model(time_series, vol="GARCH", p=1, q=1)
+        results = model.fit(disp="off")
+
+        # Calculate ACF of squared residuals
+        squared_resid = results.resid**2
+        acf_values = acf(squared_resid, nlags=12)[1:]
+
+        # Calculate GARCH ACF statistic
+        garch_acf = np.sum(acf_values**2)
+
+        return garch_acf
 
 
 class ARCHR2Feature(BaseFeature):
     def calculate(self, time_series: np.ndarray) -> float:
         """
         Calculate heterogeneity measure by ARCH R2 statistic.
+
+        Args:
+            time_series (np.ndarray): The input time series data.
+
+        Returns:
+            float: The ARCH R2 statistic.
         """
-        # TODO: Implement ARCH R2 statistic calculation
-        return 0.0
+        # Fit ARCH model
+        model = arch_model(time_series, vol="ARCH", p=1)
+        results = model.fit(disp="off")
+
+        # Calculate R2 statistic
+        arch_r2 = results.rsquared
+
+        return arch_r2
 
 
 class GARCHR2Feature(BaseFeature):
     def calculate(self, time_series: np.ndarray) -> float:
         """
         Calculate heterogeneity measure by GARCH R2 statistic.
+
+        Args:
+            time_series (np.ndarray): The input time series data.
+
+        Returns:
+            float: The GARCH R2 statistic.
         """
-        # TODO: Implement GARCH R2 statistic calculation
-        return 0.0
+        # Fit GARCH model
+        model = arch_model(time_series, vol="GARCH", p=1, q=1)
+        results = model.fit(disp="off")
+
+        # Calculate R2 statistic
+        garch_r2 = results.rsquared
+
+        return garch_r2
