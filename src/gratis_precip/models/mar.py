@@ -1,126 +1,199 @@
 from dataclasses import dataclass, field
-from typing import Optional
+from typing import Optional, Tuple, Union
 import pandas as pd
 import numpy as np
-from sklearn.preprocessing import StandardScaler
+from sklearn.preprocessing import StandardScaler, PowerTransformer
+from statsmodels.tsa.seasonal import STL
+from .mar_components import Component
 import matplotlib.pyplot as plt
 from statsmodels.graphics.tsaplots import plot_acf, plot_pacf
-from .mar_components import Component
+import logging
+from ..utils.climate_extreme import ClimateExtreme
+from scipy.stats import genextreme
+
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 
 @dataclass
 class MARDataGenerator:
-    """
-    Mixture Autoregressive (MAR) Data Generator.
-
-    This class handles the generation of time series data based on a
-    Mixture Autoregressive model structure.
-
-    Attributes:
-        root_component (Component): The root component of the MAR model.
-        steps (int): The number of steps to generate in each trajectory.
-        scaler (StandardScaler): Scaler for standardizing input data.
-        original_data (Optional[pd.Series]): The original time series data used for fitting.
-    """
-
     root_component: Component
     steps: int
+    seasonal_period: int = 365
     scaler: StandardScaler = field(init=False, default_factory=StandardScaler)
-    original_data: Optional[pd.Series] = field(init=False, default=None)
+    power_transformer: PowerTransformer = field(
+        init=False, default_factory=lambda: PowerTransformer(method="box-cox")
+    )
+    original_data: Optional[np.ndarray] = field(init=False, default=None)
+    original_index: Optional[pd.DatetimeIndex] = field(init=False, default=None)
+    stl_result: Optional[STL] = field(init=False, default=None)
+    zero_threshold: float = 0.1
+    climate_extreme: Optional[ClimateExtreme] = field(init=False, default=None)
+    extreme_threshold: float = 0.95
+    data_column_name: str = field(init=False, default="data")
 
-    def standardize_data(self, data: pd.Series) -> pd.Series:
-        """
-        Standardize the input data using StandardScaler.
+    def preprocess(self, data: pd.Series) -> np.ndarray:
+        logger.info("Preprocessing data...")
+        data_array = data.values
+        logger.info(f"Input data range: {data_array.min()} to {data_array.max()}")
+        logger.info(f"Input data length: {len(data_array)}")
 
-        Args:
-            data (pd.Series): The input time series data.
+        # Handle zero inflation
+        data_adj = np.maximum(data_array, self.zero_threshold)
+        logger.info(f"After zero handling: {data_adj.min()} to {data_adj.max()}")
 
-        Returns:
-            pd.Series: Standardized time series data.
-        """
-        return pd.Series(
-            self.scaler.fit_transform(data.values.reshape(-1, 1)).flatten(),
-            index=data.index,
+        # Apply Box-Cox transformation
+        data_transformed = self.power_transformer.fit_transform(
+            data_adj.reshape(-1, 1)
+        ).flatten()
+        logger.info(
+            f"After Box-Cox: {data_transformed.min()} to {data_transformed.max()}"
         )
 
-    def inverse_transform(self, data: pd.Series) -> pd.Series:
-        """
-        Inverse transform standardized data back to original scale.
+        # Decompose the series
+        self.stl_result = STL(
+            data_transformed, period=self.seasonal_period, robust=True
+        ).fit()
+        residuals = self.stl_result.resid
+        logger.info(f"Residuals range: {residuals.min()} to {residuals.max()}")
 
-        Args:
-            data (pd.Series): Standardized time series data.
+        # Standardize the residuals
+        standardized = self.scaler.fit_transform(residuals.reshape(-1, 1)).flatten()
+        logger.info(f"Standardized range: {standardized.min()} to {standardized.max()}")
 
-        Returns:
-            pd.Series: Data in original scale.
-        """
-        return pd.Series(
-            self.scaler.inverse_transform(data.values.reshape(-1, 1)).flatten(),
-            index=data.index,
+        # Log information about the fitted GEV distribution
+        gev_params = self.climate_extreme.fit_results[data.name]["parameters"]
+        logger.info(
+            f"Fitted GEV parameters: c={gev_params['c']:.4f}, "
+            f"loc={gev_params['loc']:.4f}, scale={gev_params['scale']:.4f}"
         )
 
-    def fit(self, time_series: pd.Series) -> None:
-        """
-        Fit the MAR model to the given time series data.
+        return standardized
 
-        Args:
-            time_series (pd.Series): The input time series data to fit the model to.
-        """
-        self.original_data = time_series
-        standardized_data = self.standardize_data(time_series)
-        self.root_component.fit(standardized_data)
+    def postprocess(self, data: np.ndarray) -> np.ndarray:
+        logger.info("Postprocessing data...")
+        logger.info(f"Input data range: {data.min()} to {data.max()}")
+
+        # Un-standardize
+        unstandardized = self.scaler.inverse_transform(data.reshape(-1, 1)).flatten()
+        logger.info(
+            f"Unstandardized range: {unstandardized.min()} to {unstandardized.max()}"
+        )
+
+        # Add back trend and seasonality
+        trend = self.stl_result.trend[: len(unstandardized)]
+        seasonal = self.stl_result.seasonal[: len(unstandardized)]
+        reconstructed = unstandardized + trend + seasonal
+        logger.info(
+            f"Reconstructed range: {reconstructed.min()} to {reconstructed.max()}"
+        )
+
+        # Inverse Box-Cox transform
+        inv_boxcox_data = self.power_transformer.inverse_transform(
+            reconstructed.reshape(-1, 1)
+        ).flatten()
+        logger.info(
+            f"After inverse Box-Cox: {inv_boxcox_data.min()} to {inv_boxcox_data.max()}"
+        )
+
+        # Handle zeros
+        inv_boxcox_data[inv_boxcox_data < self.zero_threshold] = 0
+        logger.info(
+            f"Final output range: {inv_boxcox_data.min()} to {inv_boxcox_data.max()}"
+        )
+
+        # Use GEV distribution for extreme values
+        threshold = np.percentile(self.original_data, self.extreme_threshold * 100)
+        gev_params = self.climate_extreme.fit_results[self.data_column_name][
+            "parameters"
+        ]
+
+        extreme_mask = inv_boxcox_data > threshold
+        n_extremes = np.sum(extreme_mask)
+
+        if n_extremes > 0:
+            extreme_values = genextreme.rvs(
+                c=gev_params["c"],
+                loc=gev_params["loc"],
+                scale=gev_params["scale"],
+                size=n_extremes,
+            )
+            inv_boxcox_data[extreme_mask] = extreme_values
+
+        logger.info(f"Number of extreme values generated: {n_extremes}")
+        if n_extremes > 0:
+            logger.info(
+                f"Range of extreme values: {extreme_values.min():.2f} to {extreme_values.max():.2f}"
+            )
+
+        # Handle zeros
+        inv_boxcox_data[inv_boxcox_data < self.zero_threshold] = 0
+        logger.info(
+            f"Final output range: {inv_boxcox_data.min()} to {inv_boxcox_data.max()}"
+        )
+
+        return inv_boxcox_data
+
+    def fit(self, time_series: Union[pd.Series, np.ndarray]) -> None:
+        if isinstance(time_series, pd.Series):
+            self.original_data = time_series.values
+            self.original_index = time_series.index[: self.steps]
+            self.data_column_name = time_series.name if time_series.name else "data"
+        else:
+            self.original_data = time_series
+            self.original_index = pd.date_range(
+                end=pd.Timestamp.today(), periods=len(time_series)
+            )
+            self.data_column_name = "data"
+
+        # Create ClimateExtreme instance and fit GEV distribution
+        self.climate_extreme = ClimateExtreme(
+            pd.DataFrame({self.data_column_name: self.original_data})
+        )
+        self.climate_extreme.fit_genextreme(
+            self.data_column_name, self.extreme_threshold
+        )
+
+        preprocessed_data = self.preprocess(pd.Series(self.original_data))
+        self.root_component.fit(preprocessed_data)
 
     def generate(self, n_trajectories: int) -> pd.DataFrame:
-        """
-        Generate multiple trajectories using the fitted MAR model.
-
-        Args:
-            n_trajectories (int): The number of trajectories to generate.
-
-        Returns:
-            pd.DataFrame: A DataFrame containing the generated trajectories.
-                          Each column represents a trajectory.
-        """
+        logger.info(f"Generating {n_trajectories} trajectories...")
         simulations = []
-        for _ in range(n_trajectories):
+        for i in range(n_trajectories):
+            logger.info(f"Generating trajectory {i+1}")
             sim = self._generate_single_trajectory()
-            sim = self.inverse_transform(sim)
-            sim = sim.clip(lower=0)  # Ensure non-negative values
+            logger.info(f"Raw trajectory range: {sim.min()} to {sim.max()}")
+            sim = self.postprocess(sim)
+            logger.info(f"Postprocessed trajectory range: {sim.min()} to {sim.max()}")
             simulations.append(sim)
 
-        df = pd.concat(simulations, axis=1)
-        df.columns = [f"Sim_{i+1}" for i in range(n_trajectories)]
+        df = pd.DataFrame(
+            np.column_stack(simulations),
+            columns=[f"Sim_{i+1}" for i in range(n_trajectories)],
+        )
+
+        if self.original_data is not None:
+            df.index = self.original_index
+
+        logger.info("Final generated trajectories:")
+        logger.info(df.describe())
+
         return df
 
-    def _generate_single_trajectory(self) -> pd.Series:
-        """
-        Generate a single trajectory from the MAR model.
-
-        Returns:
-            pd.Series: A single generated trajectory.
-        """
+    def _generate_single_trajectory(self) -> np.ndarray:
         trajectory = np.zeros(self.steps)
+        max_order = max(comp.order for comp in self.root_component.components)
+        trajectory[:max_order] = np.random.randn(max_order)
 
-        # Initialize with random values
-        trajectory[:10] = np.random.randn(10)  # Assuming max order is 10
-
-        for t in range(10, self.steps):
+        for t in range(max_order, self.steps):
             history = trajectory[:t]
             trajectory[t] = self.root_component.predict(history)
             trajectory[t] += np.random.normal(0, 0.1)  # Add some noise
 
-        return pd.Series(trajectory)
+        return trajectory
 
     def display_acf_plot(self, lags: int = 40, alpha: float = 0.05) -> None:
-        """
-        Display the Autocorrelation Function (ACF) plot of the original data.
-
-        Args:
-            lags (int): Number of lags to include in the plot.
-            alpha (float): Significance level for the confidence intervals.
-
-        Raises:
-            ValueError: If no data is available (fit hasn't been called).
-        """
         if self.original_data is None:
             raise ValueError("No data available. Call fit() method first.")
         plt.figure(figsize=(10, 5))
@@ -129,16 +202,6 @@ class MARDataGenerator:
         plt.show()
 
     def display_pacf_plot(self, lags: int = 40, alpha: float = 0.05) -> None:
-        """
-        Display the Partial Autocorrelation Function (PACF) plot of the original data.
-
-        Args:
-            lags (int): Number of lags to include in the plot.
-            alpha (float): Significance level for the confidence intervals.
-
-        Raises:
-            ValueError: If no data is available (fit hasn't been called).
-        """
         if self.original_data is None:
             raise ValueError("No data available. Call fit() method first.")
         plt.figure(figsize=(10, 5))
@@ -147,24 +210,44 @@ class MARDataGenerator:
         plt.show()
 
     def save_generated_trajectories(self, data: pd.DataFrame, file_path: str) -> None:
-        """
-        Save the generated trajectories to a CSV file.
-
-        Args:
-            data (pd.DataFrame): The DataFrame containing the generated trajectories.
-            file_path (str): The path where the CSV file will be saved.
-        """
         data.to_csv(file_path)
 
     @staticmethod
     def load_generated_trajectories(file_path: str) -> pd.DataFrame:
-        """
-        Load previously generated trajectories from a CSV file.
-
-        Args:
-            file_path (str): The path to the CSV file containing the trajectories.
-
-        Returns:
-            pd.DataFrame: A DataFrame containing the loaded trajectories.
-        """
         return pd.read_csv(file_path, index_col=0, parse_dates=True)
+
+    def plot_extreme_fit(self, output_destination: Optional[str] = None) -> None:
+        if self.climate_extreme is None:
+            raise ValueError(
+                "ClimateExtreme has not been fitted yet. Call fit() first."
+            )
+
+        column_name = self.original_data.name if self.original_data.name else "data"
+        self.climate_extreme.plot_fit_and_ci(column_name, "mm", output_destination)
+
+    def compare_extremes(
+        self, generated_data: pd.DataFrame, output_destination: Optional[str] = None
+    ) -> None:
+        if self.climate_extreme is None:
+            raise ValueError(
+                "ClimateExtreme has not been fitted yet. Call fit() first."
+            )
+
+        generated_extreme = ClimateExtreme(generated_data)
+        column_name = self.original_data.name if self.original_data.name else "data"
+        generated_extreme.fit_genextreme(column_name, self.extreme_threshold)
+
+        self.climate_extreme.plot_extreme_comparison(
+            column_name, generated_extreme, self.extreme_threshold, output_destination
+        )
+
+        ks_statistic, p_value = self.climate_extreme.truncated_ks_test(
+            column_name, generated_extreme, self.extreme_threshold
+        )
+        logger.info(
+            f"KS test results: statistic={ks_statistic:.4f}, p-value={p_value:.4f}"
+        )
+        if p_value < 0.05:
+            logger.info("Reject null hypothesis: Distributions are different.")
+        else:
+            logger.info("Fail to reject null hypothesis: Distributions are the same.")
