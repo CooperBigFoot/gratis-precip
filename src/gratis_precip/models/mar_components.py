@@ -54,15 +54,17 @@ class ARMAComponent(Component):
     Attributes:
         order (tuple): The order of the ARMA model (p, q).
         weight (float): The weight of this component in the mixture.
+        threshold (float): The threshold for precipitation values.
         model (ARMAModel): The ARMA model.
     """
 
     order: tuple
     weight: float
+    threshold: float = 0.1
     model: ARMAModel = field(init=False)
 
     def __post_init__(self):
-        self.model = ARMAModel(order=self.order)
+        self.model = ARMAModel(order=self.order, threshold=self.threshold)
 
     def fit(self, data: pd.Series) -> None:
         """
@@ -84,7 +86,6 @@ class ARMAComponent(Component):
         Returns:
             np.ndarray: The predicted values.
         """
-        # Generate a forecast for the specified number of steps
         forecast = self.model.generate(n_trajectories=1, steps=steps)
         return forecast.iloc[:, 0].values
 

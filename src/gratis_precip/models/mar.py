@@ -1,10 +1,8 @@
 import logging
 from dataclasses import dataclass, field
 from typing import Optional
-
 import numpy as np
 import pandas as pd
-
 from .mar_components import CompositeComponent
 from ..utils.plotting import plot_acf_pacf, plot_time_series, plot_multiple_time_series
 
@@ -80,6 +78,9 @@ class MARDataGenerator:
         Args:
             lags (int, optional): The number of lags to include in the plots. Defaults to 40.
             alpha (float, optional): The significance level for the confidence intervals. Defaults to 0.05.
+
+        Raises:
+            ValueError: If the original data is not available. Call fit() method first.
         """
         if self.original_data is None:
             raise ValueError("No data available. Call fit() method first.")
@@ -88,6 +89,9 @@ class MARDataGenerator:
     def plot_original_data(self) -> None:
         """
         Display the original time series data.
+
+        Raises:
+            ValueError: If the original data is not available. Call fit() method first.
         """
         if self.original_data is None:
             raise ValueError("No data available. Call fit() method first.")
@@ -121,6 +125,10 @@ class MARDataGenerator:
     def save_generated_trajectories(data: pd.DataFrame, file_path: str) -> None:
         """
         Save the generated time series data to a CSV file.
+
+        Args:
+            data (pd.DataFrame): The generated time series data.
+            file_path (str): The path where the CSV file will be saved.
         """
         data.to_csv(file_path)
 
