@@ -84,9 +84,17 @@ class ARComponent(Component):
         """
         if self.model is None:
             raise ValueError("Model has not been fitted.")
-        return self.model.predict(start=len(history), end=len(history), dynamic=False)[
-            0
-        ]
+
+        # Use the last 'order' values for prediction
+        last_values = history[-self.order :]
+
+        # Construct the input for prediction
+        params = self.model.params
+        prediction = params[0]  # Intercept
+        for i, param in enumerate(params[1:], start=1):
+            prediction += param * last_values[-i]
+
+        return prediction
 
     def get_weight(self) -> float:
         """
