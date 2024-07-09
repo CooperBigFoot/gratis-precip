@@ -1,9 +1,9 @@
 from abc import ABC, abstractmethod
-from dataclasses import dataclass
-from typing import List, Optional
+from dataclasses import dataclass, field
+from typing import List
 import numpy as np
 import pandas as pd
-from statsmodels.tsa.ar_model import AutoReg
+from .arma import ARMAModel
 
 
 class Component(ABC):
@@ -22,15 +22,16 @@ class Component(ABC):
         pass
 
     @abstractmethod
-    def predict(self, history: np.ndarray) -> float:
+    def predict(self, history: np.ndarray, steps: int) -> np.ndarray:
         """
-        Make a prediction based on the given history.
+        Make predictions based on the given history.
 
         Args:
             history (np.ndarray): The historical data to base the prediction on.
+            steps (int): The number of steps to predict.
 
         Returns:
-            float: The predicted value.
+            np.ndarray: The predicted values.
         """
         pass
 
@@ -46,59 +47,50 @@ class Component(ABC):
 
 
 @dataclass
-class ARComponent(Component):
+class ARMAComponent(Component):
     """
-    Autoregressive component of the Mixture Autoregressive model.
+    ARMA component of the Mixture Autoregressive model.
 
     Attributes:
-        order (int): The order of the autoregressive model.
+        order (tuple): The order of the ARMA model (p, q).
         weight (float): The weight of this component in the mixture.
-        model (Optional[AutoReg]): The fitted autoregressive model.
+        model (ARMAModel): The ARMA model.
     """
 
-    order: int
+    order: tuple
     weight: float
-    model: Optional[AutoReg] = None
+    model: ARMAModel = field(init=False)
+
+    def __post_init__(self):
+        self.model = ARMAModel(order=self.order)
 
     def fit(self, data: pd.Series) -> None:
         """
-        Fit the AR model to the given time series data.
+        Fit the ARMA model to the given time series data.
 
         Args:
             data (pd.Series): The time series data to fit the model to.
         """
-        self.model = AutoReg(data, lags=self.order, old_names=False).fit()
+        self.model.fit(data)
 
-    def predict(self, history: np.ndarray) -> float:
+    def predict(self, history: np.ndarray, steps: int) -> np.ndarray:
         """
-        Make a prediction using the fitted AR model.
+        Make predictions using the fitted ARMA model.
 
         Args:
             history (np.ndarray): The historical data to base the prediction on.
+            steps (int): The number of steps to predict.
 
         Returns:
-            float: The predicted value.
-
-        Raises:
-            ValueError: If the model has not been fitted yet.
+            np.ndarray: The predicted values.
         """
-        if self.model is None:
-            raise ValueError("Model has not been fitted.")
-
-        # Use the last 'order' values for prediction
-        last_values = history[-self.order :]
-
-        # Construct the input for prediction
-        params = self.model.params
-        prediction = params[0]  # Intercept
-        for i, param in enumerate(params[1:], start=1):
-            prediction += param * last_values[-i]
-
-        return prediction
+        # Generate a forecast for the specified number of steps
+        forecast = self.model.generate(n_trajectories=1, steps=steps)
+        return forecast.iloc[:, 0].values
 
     def get_weight(self) -> float:
         """
-        Get the weight of this AR component.
+        Get the weight of this ARMA component.
 
         Returns:
             float: The weight of the component.
@@ -111,8 +103,8 @@ class CompositeComponent(Component):
     """
     Composite component that can contain multiple sub-components.
 
-    This class implements the Composite pattern, allowing for a tree-like
-    structure of components in the Mixture Autoregressive model.
+    This class implements the Composite pattern, allowing for a mixture
+    of ARMA models in the Mixture Autoregressive model.
 
     Attributes:
         components (List[Component]): The list of sub-components.
@@ -138,19 +130,22 @@ class CompositeComponent(Component):
         for component in self.components:
             component.fit(data)
 
-    def predict(self, history: np.ndarray) -> float:
+    def predict(self, history: np.ndarray, steps: int) -> np.ndarray:
         """
-        Make a prediction based on all sub-components.
+        Make predictions based on all sub-components.
 
         Args:
             history (np.ndarray): The historical data to base the prediction on.
+            steps (int): The number of steps to predict.
 
         Returns:
-            float: The weighted average of predictions from all sub-components.
+            np.ndarray: The weighted average of predictions from all sub-components.
         """
-        predictions = [component.predict(history) for component in self.components]
+        predictions = [
+            component.predict(history, steps) for component in self.components
+        ]
         weights = [component.get_weight() for component in self.components]
-        return np.average(predictions, weights=weights)
+        return np.average(predictions, axis=0, weights=weights)
 
     def get_weight(self) -> float:
         """
@@ -160,26 +155,6 @@ class CompositeComponent(Component):
             float: The weight of the component.
         """
         return self.weight
-
-    def add_component(self, component: Component) -> None:
-        """
-        Add a new sub-component to this composite.
-
-        Args:
-            component (Component): The component to add.
-        """
-        self.components.append(component)
-        self._normalize_weights()
-
-    def remove_component(self, component: Component) -> None:
-        """
-        Remove a sub-component from this composite.
-
-        Args:
-            component (Component): The component to remove.
-        """
-        self.components.remove(component)
-        self._normalize_weights()
 
     def _normalize_weights(self) -> None:
         """
@@ -192,11 +167,7 @@ class CompositeComponent(Component):
         if total_weight == 0:
             raise ValueError("Total weight of components cannot be zero.")
         for component in self.components:
-            if isinstance(component, ARComponent):
-                component.weight /= total_weight
-            elif isinstance(component, CompositeComponent):
-                component.weight /= total_weight
-                component._normalize_weights()
+            component.weight /= total_weight
 
     def set_weights(self, new_weights: List[float]) -> None:
         """
@@ -211,8 +182,5 @@ class CompositeComponent(Component):
         if len(new_weights) != len(self.components):
             raise ValueError("Number of weights must match number of components.")
         for component, weight in zip(self.components, new_weights):
-            if isinstance(component, ARComponent):
-                component.weight = weight
-            elif isinstance(component, CompositeComponent):
-                component.weight = weight
+            component.weight = weight
         self._normalize_weights()

@@ -4,6 +4,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 from statsmodels.graphics.tsaplots import plot_acf, plot_pacf
 from typing import Union
+import seaborn as sns
 
 
 def plot_acf_pacf(
@@ -20,7 +21,7 @@ def plot_acf_pacf(
     Returns:
         None. The function displays the plots.
     """
-    fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(12, 10))
+    fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(8, 6))
 
     plot_acf(data, lags=lags, alpha=alpha, ax=ax1)
     ax1.set_title("Autocorrelation Function (ACF)")
@@ -28,6 +29,7 @@ def plot_acf_pacf(
     plot_pacf(data, lags=lags, alpha=alpha, ax=ax2)
     ax2.set_title("Partial Autocorrelation Function (PACF)")
 
+    sns.despine()
     plt.tight_layout()
     plt.show()
 
@@ -50,11 +52,12 @@ def plot_time_series(
     Returns:
         None. The function displays the plot.
     """
-    plt.figure(figsize=(12, 6))
+    plt.figure(figsize=(8, 6))
     plt.plot(data)
     plt.title(title)
     plt.xlabel(xlabel)
     plt.ylabel(ylabel)
+    sns.despine()
     plt.grid(True)
     plt.show()
 
@@ -77,12 +80,13 @@ def plot_multiple_time_series(
     Returns:
         None. The function displays the plot.
     """
-    plt.figure(figsize=(12, 6))
+    plt.figure(figsize=(8, 6))
     for name, data in data_dict.items():
         plt.plot(data, label=name)
     plt.title(title)
     plt.xlabel(xlabel)
     plt.ylabel(ylabel)
     plt.legend()
+    sns.despine()
     plt.grid(True)
     plt.show()
