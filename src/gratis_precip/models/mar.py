@@ -34,7 +34,10 @@ class MARDataGenerator:
 
     def preprocess(self, data: pd.Series) -> np.ndarray:
         logger.info("Preprocessing data...")
-        data_array = data.values
+        if isinstance(data, pd.Series):
+            data_array = data.values
+        else:
+            data_array = data
         logger.info(f"Input data range: {data_array.min()} to {data_array.max()}")
         logger.info(f"Input data length: {len(data_array)}")
 
@@ -62,7 +65,9 @@ class MARDataGenerator:
         logger.info(f"Standardized range: {standardized.min()} to {standardized.max()}")
 
         # Log information about the fitted GEV distribution
-        gev_params = self.climate_extreme.fit_results[data.name]["parameters"]
+        gev_params = self.climate_extreme.fit_results[self.data_column_name][
+            "parameters"
+        ]
         logger.info(
             f"Fitted GEV parameters: c={gev_params['c']:.4f}, "
             f"loc={gev_params['loc']:.4f}, scale={gev_params['scale']:.4f}"
@@ -154,7 +159,7 @@ class MARDataGenerator:
             self.data_column_name, self.extreme_threshold
         )
 
-        preprocessed_data = self.preprocess(pd.Series(self.original_data))
+        preprocessed_data = self.preprocess(self.original_data)
         self.root_component.fit(preprocessed_data)
 
     def generate(self, n_trajectories: int) -> pd.DataFrame:
@@ -215,39 +220,3 @@ class MARDataGenerator:
     @staticmethod
     def load_generated_trajectories(file_path: str) -> pd.DataFrame:
         return pd.read_csv(file_path, index_col=0, parse_dates=True)
-
-    def plot_extreme_fit(self, output_destination: Optional[str] = None) -> None:
-        if self.climate_extreme is None:
-            raise ValueError(
-                "ClimateExtreme has not been fitted yet. Call fit() first."
-            )
-
-        column_name = self.original_data.name if self.original_data.name else "data"
-        self.climate_extreme.plot_fit_and_ci(column_name, "mm", output_destination)
-
-    def compare_extremes(
-        self, generated_data: pd.DataFrame, output_destination: Optional[str] = None
-    ) -> None:
-        if self.climate_extreme is None:
-            raise ValueError(
-                "ClimateExtreme has not been fitted yet. Call fit() first."
-            )
-
-        generated_extreme = ClimateExtreme(generated_data)
-        column_name = self.original_data.name if self.original_data.name else "data"
-        generated_extreme.fit_genextreme(column_name, self.extreme_threshold)
-
-        self.climate_extreme.plot_extreme_comparison(
-            column_name, generated_extreme, self.extreme_threshold, output_destination
-        )
-
-        ks_statistic, p_value = self.climate_extreme.truncated_ks_test(
-            column_name, generated_extreme, self.extreme_threshold
-        )
-        logger.info(
-            f"KS test results: statistic={ks_statistic:.4f}, p-value={p_value:.4f}"
-        )
-        if p_value < 0.05:
-            logger.info("Reject null hypothesis: Distributions are different.")
-        else:
-            logger.info("Fail to reject null hypothesis: Distributions are the same.")
