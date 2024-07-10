@@ -172,30 +172,30 @@ def main():
         logger.info("Setting up feature extraction")
         features = [
             # Base features
-            # LengthFeature(),
-            # NPeriodsFeature(),
-            # PeriodsFeature(),
-            # NDiffsFeature(),
-            # NSDiffsFeature(),
-            # ACFFeature(),
-            # PACFFeature(),
-            # EntropyFeature(),
-            # NonlinearityFeature(),
-            # HurstFeature(),
-            # StabilityFeature(),
-            # LumpinessFeature(),
-            # UnitRootFeature(),
+            LengthFeature(),
+            NPeriodsFeature(),
+            PeriodsFeature(),
+            NDiffsFeature(), 
+            NSDiffsFeature(),
+            ACFFeature(),
+            PACFFeature(),
+            EntropyFeature(),
+            NonlinearityFeature(),
+            HurstFeature(),
+            StabilityFeature(),
+            LumpinessFeature(),
+            UnitRootFeature(),
             # HeterogeneityFeature(),
-            # TrendFeature(),
-            # SeasonalStrengthFeature(),
-            # SpikeFeature(),
-            # LinearityFeature(),
-            # CurvatureFeature(),
+            TrendFeature(),
+            SeasonalStrengthFeature(),
+            SpikeFeature(),
+            LinearityFeature(),
+            CurvatureFeature(),
             # RemainderACFFeature(),
-            # ARCHACFFeature(),
-            # GARCHACFFeature(),
-            # ARCHR2Feature(),
-            # GARCHR2Feature(),
+            ARCHACFFeature(),
+            GARCHACFFeature(),
+            ARCHR2Feature(),
+            GARCHR2Feature(),
             # Precipitation-specific features
             TotalPrecipitation(),
             PrecipitationIntensity(),
@@ -238,7 +238,7 @@ def main():
             feature_extractor=feature_extractor,
             dimensionality_reducer=dim_reducer,
             target_coordinates=target_coordinates,
-            num_generations=5,
+            num_generations=20,
             population_size=5,
         )
 
@@ -249,7 +249,7 @@ def main():
         # Generate data with optimized weights
         logger.info("Generating data with optimized weights")
         mar_model.update_weights(best_weights)
-        optimized_data = mar_model.generate(n_trajectories=1)
+        optimized_data = mar_model.generate(n_trajectories=6)
         optimized_data.fillna(0.0, inplace=True)
 
         negative_count = (optimized_data < 0).sum().sum()
@@ -258,29 +258,34 @@ def main():
         # Extract coordinate for optimised data
         logger.info("Extracting coordinate for optimised data")
         logger.info(f"Optimised data: {optimized_data.values}")
-        optimised_segments = split_into_segments(
-            optimized_data.values, target_days_per_segment=365
-        )
-        logger.info(f"Number of optimised segments: {len(optimised_segments)}")
-        optimised_feature_matrix = feature_extractor.extract_feature_matrix(
-            optimised_segments
-        )
-        dim_reducer = DimensionalityReducer(
-            TSNEReduction(perplexity=min(30, len(optimised_segments) - 1))
-        )
-        projection = dim_reducer.reduce_dimensions(optimised_feature_matrix)
-        optimal_coordinates = find_medoid(projection)
+        all_coord = []
+        for i in range(1, 6):
+            optimised_segments = split_into_segments(
+                optimized_data[f"Sim_{i}"].values, target_days_per_segment=365
+            )
+            logger.info(f"Number of optimised segments: {len(optimised_segments)}")
+            optimised_feature_matrix = feature_extractor.extract_feature_matrix(
+                optimised_segments
+            )
+            dim_reducer = DimensionalityReducer(
+                TSNEReduction(perplexity=min(30, len(optimised_segments) - 1))
+            )
+            projection = dim_reducer.reduce_dimensions(optimised_feature_matrix)
+            optimal_coordinates = find_medoid(projection)
+
+            all_coord.append(optimal_coordinates)
 
         # Visualize results
         logger.info("Visualizing results")
         plt.figure(figsize=(12, 6))
         plt.plot(raw_data.index, raw_data.values, label="Original Data", alpha=0.7)
-        plt.plot(
-            raw_data.index,
-            optimized_data.iloc[:, 0].values,
-            label="Optimized Model",
-            alpha=0.7,
-        )
+        for i in range(1, 6):
+            plt.plot(
+                optimized_data.index,
+                optimized_data[f"Sim_{i}"],
+                label="Optimized Model",
+                alpha=0.7,
+            )
         plt.title("Original vs Optimized Precipitation Data")
         plt.xlabel("Date")
         plt.ylabel("Precipitation (mm)")
@@ -298,9 +303,10 @@ def main():
         plt.scatter(
             target_coordinates[0], target_coordinates[1], c="red", label="Target"
         )
-        plt.scatter(
-            optimal_coordinates[0], optimal_coordinates[1], c="blue", label="Optimized"
-        )
+        for optimal_coordinates in all_coord:
+            plt.scatter(
+                optimal_coordinates[0], optimal_coordinates[1], c="blue", label="Optimized"
+            )
         plt.title("Target vs Optimized Features")
         plt.xlabel("Feature 1")
         plt.ylabel("Feature 2")
