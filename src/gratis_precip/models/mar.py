@@ -1,6 +1,6 @@
 import logging
 from dataclasses import dataclass, field
-from typing import Optional
+from typing import Optional, List
 import numpy as np
 import pandas as pd
 from .mar_components import CompositeComponent
@@ -144,3 +144,20 @@ class MARDataGenerator:
             pd.DataFrame: The loaded time series data.
         """
         return pd.read_csv(file_path, index_col=0, parse_dates=True)
+
+    def update_weights(self, new_weights: List[float]) -> None:
+        """
+        Update the weights of the composite component.
+
+        This method allows for updating the weights of the underlying ARMA components
+        in the Mixture Autoregressive model. It's particularly useful when optimizing
+        the model using techniques like genetic algorithms.
+
+        Args:
+            new_weights (List[float]): The new weights to set for each ARMA component.
+                                       The number of weights must match the number of components.
+
+        Raises:
+            ValueError: If the number of provided weights doesn't match the number of components.
+        """
+        self.components.set_weights(new_weights)

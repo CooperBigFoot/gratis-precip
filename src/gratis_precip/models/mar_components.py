@@ -117,8 +117,19 @@ class CompositeComponent(Component):
 
     def __post_init__(self):
         """
-        Post-initialization hook to normalize weights of sub-components.
+        Post-initialization hook to set up and normalize component weights.
+
+        Raises:
+            ValueError: If no components are provided.
         """
+        if not self.components:
+            raise ValueError("At least one component is required.")
+
+        # Set weights to 1 if they're all zero
+        if all(c.get_weight() == 0 for c in self.components):
+            for c in self.components:
+                c.weight = 1
+
         self._normalize_weights()
 
     def fit(self, data: pd.Series) -> None:
@@ -161,12 +172,16 @@ class CompositeComponent(Component):
         """
         Normalize the weights of all sub-components to sum to 1.
 
-        Raises:
-            ValueError: If the total weight of components is zero.
+        If all weights are initially zero, sets them to equal values.
         """
         total_weight = sum(component.get_weight() for component in self.components)
         if total_weight == 0:
-            raise ValueError("Total weight of components cannot be zero.")
+            # Set all weights to 1 if total is zero
+            for component in self.components:
+                component.weight = 1
+            total_weight = len(self.components)
+
+        # Normalize the weights
         for component in self.components:
             component.weight /= total_weight
 
