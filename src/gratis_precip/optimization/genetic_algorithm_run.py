@@ -49,24 +49,7 @@ class GARun:
         mutation_type: str = "random",
         mutation_percent_genes: float = 10,
     ):
-        """
-        Initialize the GARun instance with the given parameters.
 
-        Args:
-            mar_model (MARDataGenerator): The Mixture Autoregressive model to optimize.
-            feature_extractor (FeatureExtractor): For extracting features from time series.
-            dimensionality_reducer (DimensionalityReducer): For reducing feature dimensionality.
-            target_coordinates (Tuple[float, float]): Target coordinates in reduced feature space.
-            num_generations (int): Number of generations for the GA. Defaults to 100.
-            population_size (int): Size of the population in each generation. Defaults to 50.
-            num_parents_mating (int): Number of parents to be selected for mating. Defaults to 4.
-            init_range_low (float): Lower bound for initial weight values. Defaults to 0.0.
-            init_range_high (float): Upper bound for initial weight values. Defaults to 1.0.
-            parent_selection_type (str): Method for selecting parents. Defaults to "sss".
-            crossover_type (str): Method for crossover operation. Defaults to "single_point".
-            mutation_type (str): Method for mutation operation. Defaults to "random".
-            mutation_percent_genes (float): Percentage of genes to be mutated. Defaults to 10.
-        """
         self.mar_model = mar_model
         self.feature_extractor = feature_extractor
         self.dimensionality_reducer = dimensionality_reducer
@@ -95,6 +78,7 @@ class GARun:
         Returns:
             float: Fitness value of the solution.
         """
+        solution = np.abs(solution) # Ensure weights are positive, probably not the best way to do it
         self.mar_model.update_weights(solution)
         generated_data = self.mar_model.generate(n_trajectories=1)
 
@@ -120,7 +104,7 @@ class GARun:
     def run(self):
         """
         Run the genetic algorithm to optimize the MAR model weights.
-        
+
         Returns:
             np.ndarray: The best solution found by the genetic algorithm.
         """
@@ -158,7 +142,7 @@ class GARun:
             mutation_percent_genes=self.mutation_percent_genes,
             keep_parents=1,
             keep_elitism=2,
-            sol_per_pop=self.population_size,  # Changed from population_size to sol_per_pop
+            sol_per_pop=self.population_size,
         )
 
         self.logger.info("Genetic algorithm initialized. Starting evolution.")

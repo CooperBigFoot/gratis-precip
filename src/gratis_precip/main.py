@@ -238,7 +238,7 @@ def main():
             feature_extractor=feature_extractor,
             dimensionality_reducer=dim_reducer,
             target_coordinates=target_coordinates,
-            num_generations=25,
+            num_generations=10,
             population_size=5,
         )
 
@@ -250,6 +250,26 @@ def main():
         logger.info("Generating data with optimized weights")
         mar_model.update_weights(best_weights)
         optimized_data = mar_model.generate(n_trajectories=1)
+        optimized_data.fillna(0.0, inplace=True)
+
+        negative_count = (optimized_data < 0).sum().sum()
+        logging.info(f"Number of negative datapoints: {negative_count}")
+
+        # Extract coordinate for optimised data
+        logger.info("Extracting coordinate for optimised data")
+        logger.info(f"Optimised data: {optimized_data.values}")
+        optimised_segments = split_into_segments(
+            optimized_data.values, target_days_per_segment=365
+        )
+        logger.info(f"Number of optimised segments: {len(optimised_segments)}")
+        optimised_feature_matrix = feature_extractor.extract_feature_matrix(
+            optimised_segments
+        )
+        dim_reducer = DimensionalityReducer(
+            TSNEReduction(perplexity=min(30, len(optimised_segments) - 1))
+        )
+        projection = dim_reducer.reduce_dimensions(optimised_feature_matrix)
+        optimal_coordinates = find_medoid(projection)
 
         # Visualize results
         logger.info("Visualizing results")
@@ -273,14 +293,21 @@ def main():
         ga_run.plot_fitness_evolution()
 
         # Compare features
-        logger.info("Comparing original and optimized features")
-        optimized_features = feature_extractor.extract_feature_vector(
-            optimized_data.iloc[:, 0].values
+        logger.info("Plotting optimised features vs target features")
+        plt.figure(figsize=(8, 6))
+        plt.scatter(
+            target_coordinates[0], target_coordinates[1], c="red", label="Target"
         )
-        feature_names = [f.__class__.__name__ for f in features]
+        plt.scatter(
+            optimal_coordinates[0], optimal_coordinates[1], c="blue", label="Optimized"
+        )
+        plt.title("Target vs Optimized Features")
+        plt.xlabel("Feature 1")
+        plt.ylabel("Feature 2")
 
-        for name, orig, opt in zip(feature_names, feature_matrix, optimized_features):
-            logger.info(f"{name}: Original = {orig:.4f}, Optimized = {opt:.4f}")
+        plt.legend()
+        plt.tight_layout()
+        plt.show()
 
         logger.info("Main execution completed successfully")
 
