@@ -59,7 +59,7 @@ class ARMAComponent(Component):
     """
 
     order: tuple
-    weight: float
+    weight: float = 1.0
     threshold: float = 0.1
     model: ARMAModel = field(init=False)
 
@@ -124,11 +124,6 @@ class CompositeComponent(Component):
         """
         if not self.components:
             raise ValueError("At least one component is required.")
-
-        # Set weights to 1 if they're all zero
-        if all(c.get_weight() == 0 for c in self.components):
-            for c in self.components:
-                c.weight = 1
 
         self._normalize_weights()
 
@@ -200,3 +195,12 @@ class CompositeComponent(Component):
         for component, weight in zip(self.components, new_weights):
             component.weight = weight
         self._normalize_weights()
+
+    def get_component_count(self) -> int:
+        """
+        Get the number of sub-components in this composite component.
+
+        Returns:
+            int: The number of sub-components.
+        """
+        return len(self.components)

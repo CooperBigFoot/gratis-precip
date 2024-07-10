@@ -3,9 +3,8 @@
 # from . import models
 from . import features
 from .dimensionality_reduction import DimensionalityReducer, TSNEReduction, PCAReduction
-# from . import generation
-# from . import optimization
-# from . import visualization
-# from . import utils
+from .optimization import GARun
+from .models import MARDataGenerator, ARMAModel, ARMAComponent, CompositeComponent
+
 
 # __all__ = ["models", "features", "generation", "optimization", "visualization", "utils"]
