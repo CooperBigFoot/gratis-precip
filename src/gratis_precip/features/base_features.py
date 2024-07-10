@@ -369,9 +369,7 @@ class HeterogeneityFeature(BaseFeature):
             q = np.asarray(q, dtype=np.float64)
             return np.sum(np.where(p != 0, p * np.log(p / q), 0))
 
-        window_size = min(
-            10, len(time_series) // 5
-        )  # Adjust window size based on series length
+        window_size = max(1, min(10, len(time_series) // 5))
 
         def rolling_window(a, window):
             shape = a.shape[:-1] + (a.shape[-1] - window + 1, window)

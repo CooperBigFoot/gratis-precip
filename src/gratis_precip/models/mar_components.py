@@ -44,8 +44,6 @@ class Component(ABC):
             float: The weight of the component.
         """
         pass
-
-
 @dataclass
 class ARMAComponent(Component):
     """

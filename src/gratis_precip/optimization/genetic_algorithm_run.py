@@ -78,7 +78,10 @@ class GARun:
         Returns:
             float: Fitness value of the solution.
         """
-        solution = np.abs(solution) # Ensure weights are positive, probably not the best way to do it
+        # make sure weight are only positive
+        if np.any(solution < 0):
+            return -np.inf
+
         self.mar_model.update_weights(solution)
         generated_data = self.mar_model.generate(n_trajectories=1)
 
