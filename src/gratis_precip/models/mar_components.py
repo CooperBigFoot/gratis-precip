@@ -4,6 +4,7 @@ from typing import List
 import numpy as np
 import pandas as pd
 from .arma import ARMAModel
+from typing import Union, Tuple
 
 
 class Component(ABC):
@@ -44,6 +45,8 @@ class Component(ABC):
             float: The weight of the component.
         """
         pass
+
+
 @dataclass
 class ARMAComponent(Component):
     """
@@ -112,6 +115,7 @@ class CompositeComponent(Component):
 
     components: List[Component]
     weight: float = 1.0
+    data: pd.Series = field(init=False)
 
     def __post_init__(self):
         """
@@ -132,8 +136,10 @@ class CompositeComponent(Component):
         Args:
             data (pd.Series): The time series data to fit the components to.
         """
+        self.data = data.copy()
+
         for component in self.components:
-            component.fit(data)
+            component.fit(self.data)
 
     def predict(self, history: np.ndarray, steps: int) -> np.ndarray:
         """
@@ -202,3 +208,52 @@ class CompositeComponent(Component):
             int: The number of sub-components.
         """
         return len(self.components)
+
+    def add_component(
+        self, component: Union[Component, Tuple[int, int]], weight: float = 1.0
+    ) -> None:
+        """
+        Add a new sub-component to this composite component.
+
+        This method can accept either a pre-constructed Component object
+        or a tuple representing the order of a new ARMA model to be created.
+        The new component will be automatically fitted if data is available.
+
+        Args:
+            component (Union[Component, Tuple[int, int]]): The new sub-component to add
+                or a tuple (p, q) representing the order of a new ARMA model.
+            weight (float, optional): The initial weight for the new component. Defaults to 1.0.
+
+        Raises:
+            TypeError: If the component argument is neither a Component nor a tuple.
+            ValueError: If the weight is not a positive number, or if no data is available for fitting.
+
+        Example:
+            >>> composite.add_component(ARMAComponent(order=(1,1)))
+            >>> composite.add_component((2,1), weight=0.5)
+        """
+        if not self.components or self.data is None:
+            raise ValueError(
+                "Cannot add component. Ensure the composite has existing components and has been fitted with data."
+            )
+
+        if not isinstance(weight, (int, float)) or weight <= 0:
+            raise ValueError("Weight must be a positive number.")
+
+        if isinstance(component, Component):
+            new_component = component
+            new_component.weight = weight
+        elif isinstance(component, tuple) and len(component) == 2:
+            new_component = ARMAComponent(
+                order=component, weight=weight, threshold=self.components[0].threshold
+            )
+        else:
+            raise TypeError(
+                "Component must be either a Component object or a tuple (p,q) representing ARMA order."
+            )
+
+        # Fit the new component with the existing data
+        new_component.fit(self.data)
+
+        self.components.append(new_component)
+        self._normalize_weights()
