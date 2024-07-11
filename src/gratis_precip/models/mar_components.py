@@ -114,8 +114,8 @@ class CompositeComponent(Component):
     """
 
     components: List[Component]
-    weight: float = 1.0
     data: pd.Series = field(init=False)
+    weight: float = 1
 
     def __post_init__(self):
         """
@@ -158,15 +158,6 @@ class CompositeComponent(Component):
         weights = [component.get_weight() for component in self.components]
         return np.average(predictions, axis=0, weights=weights)
 
-    def get_weight(self) -> float:
-        """
-        Get the weight of this composite component.
-
-        Returns:
-            float: The weight of the component.
-        """
-        return self.weight
-
     def _normalize_weights(self) -> None:
         """
         Normalize the weights of all sub-components to sum to 1.
@@ -196,8 +187,10 @@ class CompositeComponent(Component):
         """
         if len(new_weights) != len(self.components):
             raise ValueError("Number of weights must match number of components.")
+
         for component, weight in zip(self.components, new_weights):
             component.weight = weight
+
         self._normalize_weights()
 
     def get_component_count(self) -> int:
@@ -257,3 +250,12 @@ class CompositeComponent(Component):
 
         self.components.append(new_component)
         self._normalize_weights()
+
+    def get_weight(self) -> float:
+        """
+        Get the weight of this composite component.
+
+        Returns:
+            float: The weight of the component.
+        """
+        return self.weight

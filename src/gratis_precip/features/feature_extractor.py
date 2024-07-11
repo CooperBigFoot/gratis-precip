@@ -1,84 +1,49 @@
 from typing import List, Dict, Any
 import numpy as np
+from scipy.sparse import csr_matrix
 from .base_features import BaseFeature
 
 
 class FeatureExtractor:
-    """
-    A class for extracting features from time series data.
-
-    This class manages a collection of feature calculators and provides methods
-    to extract features from single or multiple time series.
-
-    Attributes:
-        features (List[BaseFeature]): A list of feature calculator objects.
-    """
-
     def __init__(self, features: List[BaseFeature]):
-        """
-        Initialize the FeatureExtractor with a list of feature calculators.
-
-        Args:
-            features (List[BaseFeature]): A list of feature calculator objects.
-        """
         self.features = features
+        self.feature_sizes = [feature.get_size() for feature in features]
+        self.feature_indices = np.cumsum([0] + self.feature_sizes)
 
-    def extract_features(self, time_series: np.ndarray) -> Dict[str, Any]:
+    def extract_features(self, time_series: np.ndarray) -> csr_matrix:
         """
-        Extract features from a single time series.
+        Extract features from a single time series and return as a sparse matrix.
 
         Args:
             time_series (np.ndarray): The input time series data.
 
         Returns:
-            Dict[str, Any]: A dictionary of feature names and their calculated values.
+            csr_matrix: A sparse matrix where each row represents a feature.
         """
-        return {
-            feature.__class__.__name__: feature.calculate(time_series)
-            for feature in self.features
-        }
+        rows = []
+        cols = []
+        data = []
+        for i, feature in enumerate(self.features):
+            values = feature.calculate(time_series)
+            if not isinstance(values, (list, np.ndarray)):
+                values = [values]
+            rows.extend([i] * len(values))
+            cols.extend(range(len(values)))
+            data.extend(values)
 
-    def extract_feature_vector(self, time_series: np.ndarray) -> np.ndarray:
+        return csr_matrix(
+            (data, (rows, cols)), shape=(len(self.features), self.feature_indices[-1])
+        )
+
+    def extract_feature_matrix(self, time_series_list: List[np.ndarray]) -> csr_matrix:
         """
-        Extract features from a single time series and return as a flattened vector.
-
-        Args:
-            time_series (np.ndarray): The input time series data.
-
-        Returns:
-            np.ndarray: A 1D numpy array of feature values.
-        """
-        features = self.extract_features(time_series)
-        return np.array(self._flatten_features(features))
-
-    def extract_feature_matrix(self, time_series_list: List[np.ndarray]) -> np.ndarray:
-        """
-        Extract features from multiple time series and return as a 2D matrix.
+        Extract features from multiple time series and return as a stacked sparse matrix.
 
         Args:
             time_series_list (List[np.ndarray]): A list of input time series data.
 
         Returns:
-            np.ndarray: A 2D numpy array where each row represents the features of a time series.
+            csr_matrix: A stacked sparse matrix where each block represents features of a time series.
         """
-        feature_vectors = [self.extract_feature_vector(ts) for ts in time_series_list]
-        return np.vstack(feature_vectors)
-
-    @staticmethod
-    def _flatten_features(features: Dict[str, Any]) -> List[float]:
-        """
-        Flatten a dictionary of features into a list of float values.
-
-        Args:
-            features (Dict[str, Any]): A dictionary of feature names and their values.
-
-        Returns:
-            List[float]: A flattened list of feature values.
-        """
-        flattened = []
-        for value in features.values():
-            if isinstance(value, (list, tuple, np.ndarray)):
-                flattened.extend(value)
-            else:
-                flattened.append(value)
-        return flattened
+        feature_matrices = [self.extract_features(ts) for ts in time_series_list]
+        return csr_matrix(np.vstack([m.toarray() for m in feature_matrices]))
