@@ -251,6 +251,7 @@ class CompositeComponent(Component):
         self.components.append(new_component)
         self._normalize_weights()
 
+    
     def get_weight(self) -> float:
         """
         Get the weight of this composite component.

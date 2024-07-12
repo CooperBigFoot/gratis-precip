@@ -2,7 +2,7 @@
 
 # from . import models
 from . import features
-from .dimensionality_reduction import DimensionalityReducer, TSNEReduction, PCAReduction
+from .dimensionality_reduction import DimensionalityReducer, PCAReduction
 from .optimization import GARun
 from .models import MARDataGenerator, ARMAModel, ARMAComponent, CompositeComponent
 

@@ -7,8 +7,6 @@ from .base_features import BaseFeature
 class FeatureExtractor:
     def __init__(self, features: List[BaseFeature]):
         self.features = features
-        self.feature_sizes = [feature.get_size() for feature in features]
-        self.feature_indices = np.cumsum([0] + self.feature_sizes)
 
     def extract_features(self, time_series: np.ndarray) -> csr_matrix:
         """
@@ -23,16 +21,22 @@ class FeatureExtractor:
         rows = []
         cols = []
         data = []
+        feature_sizes = []
+
         for i, feature in enumerate(self.features):
             values = feature.calculate(time_series)
             if not isinstance(values, (list, np.ndarray)):
                 values = [values]
-            rows.extend([i] * len(values))
-            cols.extend(range(len(values)))
+            feature_size = len(values)
+            feature_sizes.append(feature_size)
+
+            rows.extend([i] * feature_size)
+            cols.extend(range(feature_size))
             data.extend(values)
 
+        total_feature_size = sum(feature_sizes)
         return csr_matrix(
-            (data, (rows, cols)), shape=(len(self.features), self.feature_indices[-1])
+            (data, (rows, cols)), shape=(len(self.features), total_feature_size)
         )
 
     def extract_feature_matrix(self, time_series_list: List[np.ndarray]) -> csr_matrix:
