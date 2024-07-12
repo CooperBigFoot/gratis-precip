@@ -1,13 +1,15 @@
+from dataclasses import dataclass, field
 import numpy as np
 import pygad
 from pygad import GA
-from typing import List, Tuple, Callable
+from typing import List, Tuple
 from ..models.mar import MARDataGenerator
 from ..features.feature_extractor import FeatureExtractor
 from ..dimensionality_reduction import DimensionalityReducer
 import logging
 
 
+@dataclass
 class GARun:
     """
     Genetic Algorithm runner for optimizing Mixture Autoregressive model weights.
@@ -19,7 +21,7 @@ class GARun:
         mar_model (MARDataGenerator): The Mixture Autoregressive model to optimize.
         feature_extractor (FeatureExtractor): Extracts features from time series data.
         dimensionality_reducer (DimensionalityReducer): Reduces dimensionality of feature space.
-        target_coordinates (Tuple[float, float]): The target coordinates in reduced feature space.
+        target_time_series (np.ndarray): The target time series to match.
         num_generations (int): Number of generations for the genetic algorithm.
         population_size (int): Size of the population in each generation.
         num_parents_mating (int): Number of parents to be selected for mating.
@@ -31,107 +33,97 @@ class GARun:
         mutation_percent_genes (float): Percentage of genes to be mutated.
         ga_instance (pygad.GA): Instance of PyGAD genetic algorithm.
         logger (logging.Logger): Logger for the class.
+        target_features (np.ndarray): Extracted features of the target time series.
     """
 
-    def __init__(
-        self,
-        mar_model: MARDataGenerator,
-        feature_extractor: FeatureExtractor,
-        dimensionality_reducer: DimensionalityReducer,
-        target_coordinates: Tuple[float, float],
-        num_generations: int = 100,
-        population_size: int = 50,
-        num_parents_mating: int = 4,
-        init_range_low: float = 0.0,
-        init_range_high: float = 1.0,
-        parent_selection_type: str = "sss",
-        crossover_type: str = "single_point",
-        mutation_type: str = "random",
-        mutation_percent_genes: float = 10,
-    ):
+    mar_model: MARDataGenerator
+    feature_extractor: FeatureExtractor
+    dimensionality_reducer: DimensionalityReducer
+    target_time_series: np.ndarray
+    num_generations: int = 100
+    population_size: int = 50
+    num_parents_mating: int = 4
+    init_range_low: float = 0.0
+    init_range_high: float = 1.0
+    parent_selection_type: str = "sss"
+    crossover_type: str = "single_point"
+    mutation_type: str = "random"
+    mutation_percent_genes: float = 10
+    ga_instance: GA = field(init=False, default=None)
+    logger: logging.Logger = field(init=False)
+    target_features: np.ndarray = field(init=False)
 
-        self.mar_model = mar_model
-        self.feature_extractor = feature_extractor
-        self.dimensionality_reducer = dimensionality_reducer
-        self.target_coordinates = target_coordinates
-        self.num_generations = num_generations
-        self.population_size = population_size
-        self.num_parents_mating = num_parents_mating
-        self.init_range_low = init_range_low
-        self.init_range_high = init_range_high
-        self.parent_selection_type = parent_selection_type
-        self.crossover_type = crossover_type
-        self.mutation_type = mutation_type
-        self.mutation_percent_genes = mutation_percent_genes
-        self.ga_instance = None
-        self.logger = logging.getLogger(__name__)
-
-    def fitness_func(self, ga_instance, solution, solution_idx):
+    def __post_init__(self):
         """
-        Calculate the fitness of a solution.
+        Post-initialization method to set up logger and extract target features.
+        """
+        self.logger = logging.getLogger(__name__)
+        self.target_features = (
+            self.feature_extractor.extract_features(self.target_time_series)
+            .toarray()
+            .flatten()
+        )
+
+    def fitness_func(
+        self, ga_instance: pygad.GA, solution: List[float], solution_idx: int
+    ) -> float:
+        """
+        Calculate the fitness of a solution using multiple generated trajectories.
+
+        This method generates multiple time series using the MAR model with the given
+        solution (weights), extracts features for each, and computes the mean distance
+        to the target features in the reduced dimension space.
 
         Args:
-            ga_instance (pygad.GA): The instance of the GA class.
-            solution (list): The solution to calculate its fitness.
-            solution_idx (int): The solution's index within the population.
+            ga_instance: The instance of the GA class.
+            solution: The solution to calculate its fitness (MAR model weights).
+            solution_idx: The solution's index within the population.
 
         Returns:
-            float: Fitness value of the solution.
+            float: Fitness value of the solution. Higher values indicate better fitness.
         """
-        # make sure weight are only positive
-        if np.any(solution < 0):
+        if np.any(solution < self.init_range_low) or np.any(
+            solution > self.init_range_high
+        ):
             return -np.inf
 
         self.mar_model.update_weights(solution)
-        generated_data = self.mar_model.generate(n_trajectories=1)
+        n_trajectories = 5
+        generated_data = self.mar_model.generate(n_trajectories=n_trajectories)
 
-        generated_data.fillna(0.0, inplace=True)
+        distances = []
+        for i in range(n_trajectories):
+            trajectory = generated_data.iloc[:, i].values
+            trajectory = np.nan_to_num(trajectory, nan=0.0)
 
-        feature_vector = self.feature_extractor.extract_feature_vector(
-            generated_data.iloc[:, 0].values
-        )
-
-        if feature_vector.ndim == 1:
-            # If we have a single sample, we'll work with the full feature vector
-            distance = np.linalg.norm(feature_vector - self.target_features)
-        else:
-            # If we have multiple samples, we'll use dimensionality reduction
-            reduced_features = self.dimensionality_reducer.reduce_dimensions(
-                feature_vector.reshape(1, -1)
+            generated_features = (
+                self.feature_extractor.extract_features(trajectory).toarray().flatten()
             )
-            distance = np.linalg.norm(reduced_features[0] - self.target_coordinates)
 
-        fitness = 1 / (1 + distance)  # Convert distance to fitness (higher is better)
+            self.dimensionality_reducer.fit(self.target_features, generated_features)
+            distance = self.dimensionality_reducer.reduction_technique.compare_distance(
+                generated_features
+            )
+            distances.append(distance)
+
+        mean_distance = np.mean(distances)
+        fitness = 1 / (1 + mean_distance)
         return fitness
 
-    def run(self):
+    def run(self) -> np.ndarray:
         """
         Run the genetic algorithm to optimize the MAR model weights.
 
+        This method initializes and runs the genetic algorithm to find the optimal weights
+        for the MAR model that produce time series closest to the target in the feature space.
+
         Returns:
-            np.ndarray: The best solution found by the genetic algorithm.
+            np.ndarray: The best solution (optimal weights) found by the genetic algorithm.
         """
         self.logger.info("Starting genetic algorithm run")
 
-        # Calculate target features
-        original_features = self.feature_extractor.extract_feature_matrix(
-            [self.mar_model.original_data.values]
-        )
-        self.target_features = np.mean(original_features, axis=0)
-
-        # Only perform dimensionality reduction if we have multiple samples
-        if original_features.shape[0] > 1 and self.dimensionality_reducer is not None:
-            reduced_features = self.dimensionality_reducer.reduce_dimensions(
-                original_features
-            )
-            self.target_coordinates = self.find_medoid(reduced_features)
-        else:
-            self.target_coordinates = None
-
-        # Define the number of genes (weights in our MAR model)
         num_genes = self.mar_model.components.get_component_count()
 
-        # Initialize the genetic algorithm
         self.ga_instance = GA(
             num_generations=self.num_generations,
             num_parents_mating=self.num_parents_mating,
@@ -150,14 +142,11 @@ class GARun:
 
         self.logger.info("Genetic algorithm initialized. Starting evolution.")
 
-        # Run the genetic algorithm
         self.ga_instance.run()
 
-        # Get the best solution
         solution, solution_fitness, _ = self.ga_instance.best_solution()
         self.logger.info(f"Best solution found with fitness: {solution_fitness}")
 
-        # Update the MAR model with the best weights
         self.mar_model.update_weights(solution)
 
         self.logger.info("Genetic algorithm run completed")
@@ -167,6 +156,9 @@ class GARun:
     def plot_fitness_evolution(self):
         """
         Plot the evolution of fitness over generations.
+
+        This method visualizes how the fitness of the best solution in each generation
+        has evolved over the course of the genetic algorithm run.
 
         Raises:
             ValueError: If the genetic algorithm hasn't been run yet.
