@@ -10,7 +10,6 @@ GRATIS-Precip is an experimental Python project for generating synthetic precipi
 - **Feature Extraction**: Comprehensive statistical feature extraction from time series data.
 - **Dimensionality Reduction**: PCA-based reduction for efficient feature space representation.
 - **Genetic Algorithm Optimization**: Fine-tune model parameters for desired statistical properties.
-- **Parallel Processing**: Improved performance for computationally intensive tasks.
 
 ## Installation
 
@@ -26,26 +25,85 @@ conda activate gratis-precip
 Here's a basic example of how to use GRATIS-Precip:
 
 ```python
+import numpy as np
+import pandas as pd
+from datetime import datetime
+from meteostat import Point, Daily
 from gratis_precip.models.mar import MARDataGenerator
 from gratis_precip.models.mar_components import ARMAComponent, CompositeComponent
 from gratis_precip.features.feature_extractor import FeatureExtractor
+from gratis_precip.features.precip_features import *
+from gratis_precip.dimensionality_reduction import DimensionalityReducer, PCAReduction
 from gratis_precip.optimization.genetic_algorithm_run import GARun
 
+# Fetch precipitation data
+def fetch_precipitation_data():
+    location = Point(47.368011576362896, 8.5387625442684280)  # Zurich
+    start = datetime(1986, 1, 1)
+    end = datetime(2023, 12, 31)
+    data = Daily(location, start, end)
+    return data.fetch()['prcp']
+
+target_data = fetch_precipitation_data()
+
 # Create MAR model
-components = [ARMAComponent(order=(1, 1)), ARMAComponent(order=(2, 1))]
-composite = CompositeComponent(components)
-mar_generator = MARDataGenerator(composite, steps=365)
+def create_mar_model(data: pd.Series):
+    components = [
+        ARMAComponent(order=(1, 1), weight=1/3),
+        ARMAComponent(order=(2, 1), weight=1/3),
+        ARMAComponent(order=(1, 2), weight=1/3)
+    ]
+    composite = CompositeComponent(components)
+    mar_generator = MARDataGenerator(composite, steps=len(data))
+    mar_generator.fit(data)
+    return mar_generator
 
-# Generate synthetic data
-synthetic_data = mar_generator.generate(n_trajectories=5)
+mar_model = create_mar_model(target_data)
 
-# Optimize model parameters
-ga_run = GARun(mar_generator, feature_extractor, dimensionality_reducer, target_data)
-best_solution = ga_run.run(in_parallel=True)
+# Set up feature extractor
+feature_extractors = [
+    TotalPrecipitation(), PrecipitationIntensity(), DrySpellDuration(),
+    WetSpellDuration(), PrecipitationVariability(), ExtremePrecipitationFrequency(),
+    MaximumDailyPrecipitation(), WetDayFrequency()
+]
+feature_extractor = FeatureExtractor(feature_extractors)
 
-# Generate optimized synthetic data
-mar_generator.update_weights(best_solution)
-optimized_data = mar_generator.generate(n_trajectories=1)
+# Set up dimensionality reducer
+pca_reduction = PCAReduction(n_components=2)
+dimensionality_reducer = DimensionalityReducer(pca_reduction)
+
+# Create and run genetic algorithm
+ga_run = GARun(
+    mar_model=mar_model,
+    feature_extractor=feature_extractor,
+    dimensionality_reducer=dimensionality_reducer,
+    target_time_series=target_data.values,
+    num_generations=500,
+    population_size=40,
+    num_parents_mating=10
+)
+
+best_solution = ga_run.run()
+
+# Generate optimized time series
+mar_model.update_weights(best_solution)
+optimized_data = mar_model.generate(n_trajectories=6)
+
+# Visualize results (example)
+import matplotlib.pyplot as plt
+
+plt.figure(figsize=(12, 6))
+plt.plot(target_data.index, target_data.values, label='Target', alpha=0.7)
+for i in range(6):
+    plt.plot(target_data.index, optimized_data[f'Sim_{i+1}'], label=f'Generated {i+1}', alpha=0.7)
+plt.legend()
+plt.title('Target vs Generated Precipitation Data')
+plt.xlabel('Date')
+plt.ylabel('Precipitation (mm)')
+plt.show()
+
+# Optional: Plot fitness evolution
+ga_run.plot_fitness_evolution()
 ```
 
 ## Project Structure
@@ -72,62 +130,4 @@ gratis_precip/
 └── main.py
 ```
 
-## Dependencies
-
-- NumPy
-- Pandas
-- Scikit-learn
-- Meteostat
-- PyGAD
-
-## Potential Applications
-
-- Climate modeling
-- Hydrological forecasting
-- Testing weather-dependent systems
-- Assessing climate change scenarios
-
-## Limitations and Future Work
-
-This project is a proof-of-concept and not intended for production use. Future improvements could include:
-
-- More sophisticated precipitation models
-- Additional feature extraction methods
-- Advanced optimization techniques
-- Improved computational efficiency
-
-## Contributing
-
-While this is primarily a personal project, suggestions and discussions are welcome. Feel free to open an issue or submit a pull request.
-
-## License
-
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
-
-## Acknowledgements
-
-- Kang et al. for their paper on GRATIS
-- The Meteostat project for providing historical weather data
-
----
-
-Developed by [Your Name] as a personal learning project in time series analysis and synthetic data generation.
-```
-
-This README provides:
-
-1. A clear project title and overview
-2. Key features of the project
-3. Installation instructions
-4. A basic usage example
-5. Project structure
-6. List of dependencies
-7. Potential applications
-8. Limitations and future work suggestions
-9. Information on contributing
-10. License information
-11. Acknowledgements
-
-This comprehensive README gives visitors to your GitHub repository a clear understanding of what GRATIS-Precip is, how to use it, and its potential applications. It also sets appropriate expectations by mentioning that it's a proof-of-concept project.
-
-Remember to replace `[Your Name]` and `yourusername` with your actual name and GitHub username. Also, ensure that you have a `requirements.txt` file in your repository with all the necessary dependencies listed.
+For more detailed usage and API documentation, please refer to the individual module docstrings.
