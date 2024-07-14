@@ -15,9 +15,10 @@ GRATIS-Precip is an experimental Python project for generating synthetic precipi
 ## Installation
 
 ```bash
-git clone https://github.com/yourusername/GRATIS-Precip.git
+git clone git@github.com:CooperBigFoot/gratis-precip.git
 cd GRATIS-Precip
-pip install -r requirements.txt
+conda env create -f environment.yml
+conda activate gratis-precip
 ```
 
 ## Usage

@@ -14,6 +14,11 @@ dependencies:
   - black
   - sphinx
   - sphinx-rtd-theme
+  - seaborn
+  - statsmodels
   - pip
   - pip:
       - setuptools_scm
+      - meteostat
+      - pygad
+      - arch
