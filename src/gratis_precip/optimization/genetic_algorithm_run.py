@@ -52,6 +52,7 @@ class GARun:
     ga_instance: GA = field(init=False, default=None)
     logger: logging.Logger = field(init=False)
     target_features: np.ndarray = field(init=False)
+    generated_features: np.ndarray = field(init=False)
 
     def __post_init__(self):
         """
@@ -64,20 +65,35 @@ class GARun:
             .flatten()
         )
 
-    def fitness_func(
-        self, ga_instance: pygad.GA, solution: List[float], solution_idx: int
-    ) -> float:
+    def get_target_features(self) -> np.ndarray:
         """
-        Calculate the fitness of a solution using multiple generated trajectories.
+        Get the target features extracted from the target time series.
 
-        This method generates multiple time series using the MAR model with the given
-        solution (weights), extracts features for each, and computes the mean distance
-        to the target features in the reduced dimension space.
+        Returns:
+            np.ndarray: The target features in the reduced dimension space.
+        """
+        return self.target_features
+
+    def get_generated_features(self) -> np.ndarray:
+        """
+        Get the generated features extracted from the generated time series.
+
+        Returns:
+            np.ndarray: The generated features in the reduced dimension space.
+        """
+        return self.generated_features
+
+    def fitness_func(self, ga_instance, solution, solution_idx):
+        """
+        Calculate the fitness of a solution.
+
+        This method generates a time series using the MAR model with the given solution (weights),
+        extracts its features, and compares them to the target features in the reduced dimension space.
 
         Args:
-            ga_instance: The instance of the GA class.
-            solution: The solution to calculate its fitness (MAR model weights).
-            solution_idx: The solution's index within the population.
+            ga_instance (pygad.GA): The instance of the GA class.
+            solution (list): The solution to calculate its fitness (MAR model weights).
+            solution_idx (int): The solution's index within the population.
 
         Returns:
             float: Fitness value of the solution. Higher values indicate better fitness.
@@ -88,26 +104,25 @@ class GARun:
             return -np.inf
 
         self.mar_model.update_weights(solution)
-        n_trajectories = 5
-        generated_data = self.mar_model.generate(n_trajectories=n_trajectories)
+        generated_data = self.mar_model.generate(n_trajectories=1)
 
-        distances = []
-        for i in range(n_trajectories):
-            trajectory = generated_data.iloc[:, i].values
-            trajectory = np.nan_to_num(trajectory, nan=0.0)
+        generated_data.fillna(0.0, inplace=True)
 
-            generated_features = (
-                self.feature_extractor.extract_features(trajectory).toarray().flatten()
-            )
+        generated_features = (
+            self.feature_extractor.extract_features(generated_data.iloc[:, 0].values)
+            .toarray()
+            .flatten()
+        )
 
-            self.dimensionality_reducer.fit(self.target_features, generated_features)
-            distance = self.dimensionality_reducer.reduction_technique.compare_distance(
-                generated_features
-            )
-            distances.append(distance)
+        self.dimensionality_reducer.fit(self.target_features, generated_features)
 
-        mean_distance = np.mean(distances)
-        fitness = 1 / (1 + mean_distance)
+        distance = self.dimensionality_reducer.reduction_technique.compare_distance(
+            generated_features
+        )
+
+        self.generated_features = generated_features
+
+        fitness = 1 / (1 + distance)
         return fitness
 
     def run(self) -> np.ndarray:

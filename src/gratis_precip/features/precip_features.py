@@ -159,3 +159,35 @@ class WetDayFrequency(BaseFeature):
             float: The frequency of wet days.
         """
         return np.sum(time_series > 0.1) / len(time_series)
+
+
+class MeanPrecipitation(BaseFeature):
+    """Feature class to calculate mean precipitation."""
+
+    def calculate(self, time_series: np.ndarray) -> float:
+        """
+        Calculate the mean precipitation amount.
+
+        Args:
+            time_series (np.ndarray): The input precipitation time series data.
+
+        Returns:
+            float: The mean precipitation amount.
+        """
+        return np.mean(time_series)
+
+
+class MinimumDailyPrecipitation(BaseFeature):
+    """Feature class to calculate minimum precipitation."""
+
+    def calculate(self, time_series: np.ndarray) -> float:
+        """
+        Calculate the minimum precipitation amount.
+
+        Args:
+            time_series (np.ndarray): The input precipitation time series data.
+
+        Returns:
+            float: The minimum precipitation amount.
+        """
+        return np.min(time_series)
